@@ -5,7 +5,7 @@ WORKDIR /app
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV MCP_CONFIG_DIR=/home/node/.gmail-mcp
 
-# Create logging directory with proper ownership
+# Create config directory for OAuth credentials
 RUN mkdir -p /home/node/.gmail-mcp && \
     chown -R node:node /home/node/.gmail-mcp && \
     chmod -R 755 /home/node/.gmail-mcp

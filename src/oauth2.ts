@@ -4,6 +4,30 @@ import fs from "fs"
 import http from "http"
 import open from "open"
 
+/**
+ * Writes credential data to a file with owner-only permissions (0o600).
+ * Uses three complementary mechanisms for defense in depth:
+ * 1. umask(0o077) - prevents group/other access at the process level
+ * 2. mode: 0o600 on writeFileSync - requests owner-only permissions from the OS
+ * 3. chmodSync(0o600) - explicitly sets permissions after write as a backstop
+ * If chmod fails after a successful write, the file is deleted to prevent
+ * credentials from sitting on disk with incorrect permissions.
+ */
+const writeCredentialsFile = (filePath: string, data: string) => {
+  const oldUmask = process.umask(0o077)
+  try {
+    fs.writeFileSync(filePath, data, { mode: 0o600 })
+    try {
+      fs.chmodSync(filePath, 0o600)
+    } catch (chmodError: any) {
+      try { fs.unlinkSync(filePath) } catch {}
+      throw new Error(`Failed to set secure permissions on ${filePath}: ${chmodError.message}. File has been removed to prevent insecure credential storage.`)
+    }
+  } finally {
+    process.umask(oldUmask)
+  }
+}
+
 const AUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.compose',
@@ -87,7 +111,17 @@ export const launchAuthServer = async (oauth2Client: OAuth2Client) => new Promis
     try {
       const { tokens } = await oauth2Client.getToken(code)
       oauth2Client.setCredentials(tokens)
-      fs.writeFileSync(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+
+      try {
+        writeCredentialsFile(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+      } catch (writeError: any) {
+        console.error(`Warning: Failed to save credentials to ${GMAIL_CREDENTIALS_PATH}: ${writeError.message}`)
+        res.writeHead(200)
+        res.end(`Authentication succeeded, but credentials could not be saved to ${GMAIL_CREDENTIALS_PATH}: ${writeError.message}. Please check file permissions and try again.`)
+        server.close()
+        resolve(void 0)
+        return
+      }
 
       res.writeHead(200)
       res.end(`Authentication successful! Go to ${GMAIL_CREDENTIALS_PATH} to view your REFRESH_TOKEN. You can close this window.`)
@@ -116,9 +150,14 @@ export const validateCredentials = async (oauth2Client: OAuth2Client) => {
     const { credentials: tokens } = await oauth2Client.refreshAccessToken()
     oauth2Client.setCredentials(tokens)
 
-    fs.writeFileSync(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+    try {
+      writeCredentialsFile(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+    } catch (writeError: any) {
+      console.error(`Warning: Failed to save refreshed credentials to ${GMAIL_CREDENTIALS_PATH}: ${writeError.message}. Credentials are valid in memory but will need to be refreshed again next session.`)
+    }
+
     return true
-  } catch (error: any) { 
+  } catch (error: any) {
     return false
   }
 }
