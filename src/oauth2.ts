@@ -4,6 +4,16 @@ import fs from "fs"
 import http from "http"
 import open from "open"
 
+const writeCredentialsFile = (filePath: string, data: string) => {
+  const oldUmask = process.umask(0o077)
+  try {
+    fs.writeFileSync(filePath, data, { mode: 0o600 })
+    fs.chmodSync(filePath, 0o600)
+  } finally {
+    process.umask(oldUmask)
+  }
+}
+
 const AUTH_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.compose',
@@ -87,7 +97,7 @@ export const launchAuthServer = async (oauth2Client: OAuth2Client) => new Promis
     try {
       const { tokens } = await oauth2Client.getToken(code)
       oauth2Client.setCredentials(tokens)
-      fs.writeFileSync(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+      writeCredentialsFile(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
 
       res.writeHead(200)
       res.end(`Authentication successful! Go to ${GMAIL_CREDENTIALS_PATH} to view your REFRESH_TOKEN. You can close this window.`)
@@ -116,7 +126,7 @@ export const validateCredentials = async (oauth2Client: OAuth2Client) => {
     const { credentials: tokens } = await oauth2Client.refreshAccessToken()
     oauth2Client.setCredentials(tokens)
 
-    fs.writeFileSync(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
+    writeCredentialsFile(GMAIL_CREDENTIALS_PATH, JSON.stringify(tokens, null, 2))
     return true
   } catch (error: any) { 
     return false
